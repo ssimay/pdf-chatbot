@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>📘 PDF Chatbot</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="icon" href="https://emojiapi.dev/api/v1/book/64.png" />
+  <style>
+    .dots::after {
+      content: '';
+      display: inline-block;
+      width: 1em;
+      height: 1em;
+      vertical-align: middle;
+      border-radius: 50%;
+      background-color: #4b5563;
+      box-shadow: 0 0 0 0 #4b5563;
+      animation: pulse 1.2s infinite ease-in-out;
+    }
+
+    @keyframes pulse {
+      0%, 100% {
+        box-shadow: 0 0 0 0 #4b5563;
+      }
+      50% {
+        box-shadow: 0 0 0 0.4em transparent;
+      }
+    }
+
+    input:focus, button:focus {
+      outline: none;
+      box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.5); 
+    }
+    .transition-opacity {
+        transition: opacity 0.3s ease-in-out;
+    }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+  <div class="w-full max-w-3xl bg-white p-6 rounded-2xl shadow-lg flex flex-col h-[90vh]">
+    <h1 class="text-3xl font-bold text-center mb-4 text-blue-700">📘 PDF Chatbot</h1>
+
+    <div class="mb-4">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div id="flash-message-{{ loop.index }}" class="p-3 mb-2 rounded-md {% if category == 'error' %}bg-red-100 text-red-800{% elif category == 'success' %}bg-green-100 text-green-800{% else %}bg-blue-100 text-blue-800{% endif %} flex justify-between items-center transition-opacity duration-300 ease-in-out" role="alert">
+              <span>{{ message }}</span>
+              <button type="button" class="ml-auto -mx-1.5 -my-1.5 bg-transparent text-gray-500 rounded-lg focus:ring-2 focus:ring-gray-400 p-1.5 hover:bg-gray-200 inline-flex items-center justify-center h-8 w-8 dark:text-gray-400 dark:hover:bg-gray-700" data-dismiss-target="#flash-message-{{ loop.index }}" aria-label="Close">
+                <span class="sr-only">Close</span>
+                <svg class="w-3 h-3" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 14 14">
+                  <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m1 1 6 6m0 0 6 6M7 7l6-6M7 7l-6 6"/>
+                </svg>
+              </button>
+            </div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+    </div>
+
+    <form id="upload-form" action="/upload" method="post" enctype="multipart/form-data" class="mb-4 p-4 border border-gray-300 rounded-lg bg-gray-50 flex items-center gap-4">
+      <input type="file" name="pdf_file" id="pdf-file-input" accept=".pdf" class="flex-grow border border-gray-300 rounded-lg p-2 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
+      <button type="submit" class="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-lg transition duration-200">
+        Upload PDF
+      </button>
+    </form>
+
+    {% if available_pdfs %}
+    <div id="existing-pdfs-container" class="mb-4 p-4 border border-gray-300 rounded-lg bg-gray-50">
+        <h2 class="text-lg font-semibold text-gray-800 mb-2">Existing PDFs:</h2>
+        <div class="space-y-2 max-h-48 overflow-y-auto pr-2"> {# Added overflow for long lists #}
+            {% for pdf_name in available_pdfs %}
+            <div class="flex items-center justify-between bg-white p-2 rounded-md shadow-sm border border-gray-200">
+                <span class="text-gray-700 text-sm font-medium flex-grow break-all pr-2">{{ pdf_name }}</span>
+                <div class="flex space-x-2">
+                    <form action="/set_active_pdf" method="post" class="inline-block">
+                        <input type="hidden" name="pdf_name" value="{{ pdf_name }}">
+                        <button type="submit" class="bg-blue-500 hover:bg-blue-600 text-white text-xs font-semibold py-1 px-3 rounded-md transition duration-200">
+                            Load
+                        </button>
+                    </form>
+                    <form action="/delete_pdf" method="post" class="inline-block">
+                        <input type="hidden" name="pdf_name" value="{{ pdf_name }}">
+                        <button type="submit" class="bg-red-500 hover:bg-red-600 text-white text-xs font-semibold py-1 px-3 rounded-md transition duration-200" onclick="return confirm('Are you sure you want to delete &quot;{{ pdf_name }}&quot; and its data?');">
+                            Delete
+                        </button>
+                    </form>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+
+    {% if session.get('active_pdf_name') %}
+      <p class="text-center text-sm text-gray-600 mb-4" id="active-pdf-display">
+        Active PDF: <span class="font-semibold text-blue-700">{{ session['active_pdf_name'] }}</span>
+      </p>
+    {% endif %}
+
+
+    <div class="chat-window flex-1 overflow-y-auto border border-gray-300 rounded-lg p-4 bg-gray-50 space-y-4 mb-4" id="chat-window">
+      {% for msg in history %}
+        <div class="flex {{ 'justify-end' if msg.sender == 'user' else 'justify-start' }}">
+          <div class="{{ 'bg-blue-600 text-white' if msg.sender == 'user' else 'bg-gray-200 text-gray-900' }} rounded-xl px-4 py-2 max-w-md break-words shadow transition-opacity duration-300 opacity-100">
+            {{ msg.message }}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+
+    <form id="chat-form" class="flex flex-wrap items-center gap-2">
+      <input
+        type="text"
+        id="question-input"
+        name="question"
+        placeholder="Ask a question..."
+        required
+        class="flex-grow border border-gray-300 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-blue-400 transition duration-200"
+        autocomplete="off"
+        autofocus
+      />
+
+      <label class="inline-flex items-center space-x-2 text-gray-700 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          name="remember"
+          id="remember-checkbox"
+          class="form-checkbox h-5 w-5 text-blue-600"
+          {% if remember %}checked{% endif %}
+        />
+        <span>Remember</span>
+      </label>
+
+      <button
+        type="submit"
+        class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition duration-200"
+      >
+        Send
+      </button>
+    </form>
+
+    <a href="/reset" class="text-sm text-red-600 hover:underline mt-2 text-center">Reset conversation and active PDF context</a>
+  </div>
+
+  <script>
+    const chatWindow = document.getElementById('chat-window');
+    const chatForm = document.getElementById('chat-form');
+    const questionInput = document.getElementById('question-input');
+    const rememberCheckbox = document.getElementById('remember-checkbox');
+    const uploadForm = document.getElementById('upload-form');
+    const pdfFileInput = document.getElementById('pdf-file-input');
+
+    function appendMessage(sender, message, options = {}) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'flex ' + (sender === 'user' ? 'justify-end' : 'justify-start');
+
+      const bubble = document.createElement('div');
+      bubble.className = (sender === 'user'
+        ? 'bg-blue-600 text-white'
+        : 'bg-gray-200 text-gray-900') +
+        ' rounded-xl px-4 py-2 max-w-md break-words shadow transition-opacity duration-300 opacity-0';
+
+      if (options.loading) {
+        const dots = document.createElement('div');
+        dots.className = 'flex space-x-1';
+        for (let i = 0; i < 3; i++) {
+          const dot = document.createElement('span');
+          dot.className = 'w-2 h-2 bg-gray-500 rounded-full animate-bounce';
+          dot.style.animationDelay = `${i * 0.2}s`;
+          dots.appendChild(dot);
+        }
+        bubble.appendChild(dots);
+      } else {
+        bubble.innerText = message;
+      }
+
+      wrapper.appendChild(bubble);
+      chatWindow.appendChild(wrapper);
+
+      requestAnimationFrame(() => {
+        bubble.classList.remove('opacity-0');
+        bubble.classList.add('opacity-100');
+      });
+
+      chatWindow.scrollTop = chatWindow.scrollHeight;
+      return wrapper;
+    }
+
+    function setupFlashMessageClosers() {
+        document.querySelectorAll('[data-dismiss-target]').forEach(button => {
+            button.addEventListener('click', function() {
+                const targetId = this.getAttribute('data-dismiss-target');
+                const targetElement = document.querySelector(targetId);
+                if (targetElement) {
+                    targetElement.style.opacity = '0';
+                    targetElement.addEventListener('transitionend', () => {
+                        targetElement.remove();
+                    }, { once: true });
+                }
+            });
+        });
+    }
+
+    window.onload = () => {
+      chatWindow.scrollTop = chatWindow.scrollHeight;
+      setupFlashMessageClosers();
+    };
+
+    chatForm.addEventListener('submit', async function (e) {
+      e.preventDefault();
+
+      const question = questionInput.value.trim();
+      const remember = rememberCheckbox.checked;
+      if (!question) return;
+
+      appendMessage('user', question);
+      questionInput.value = '';
+
+      const loadingWrapper = appendMessage('bot', '', { loading: true });
+
+      try {
+        const response = await fetch('/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            question,
+            ...(remember ? { remember: 'on' } : {})
+          })
+        });
+
+        if (response.ok) {
+          const html = await response.text();
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, 'text/html');
+          const newMessages = doc.querySelectorAll('#chat-window > .flex');
+
+          if (newMessages.length > 0) {
+              const lastBotMessageElement = newMessages[newMessages.length - 1];
+              loadingWrapper.replaceWith(lastBotMessageElement.cloneNode(true));
+          } else {
+              loadingWrapper.remove();
+              appendMessage('bot', '⚠️ Error getting response or no new messages from server.');
+          }
+        } else {
+          loadingWrapper.remove();
+          appendMessage('bot', '⚠️ Error getting response from server.');
+        }
+      } catch (err) {
+        loadingWrapper.remove();
+        appendMessage('bot', '⚠️ Network error. Please check your connection.');
+        console.error("Chat fetch error:", err);
+      }
+      chatWindow.scrollTop = chatWindow.scrollHeight;
+    });
+
+    uploadForm.addEventListener('submit', async function (e) {
+        e.preventDefault();
+
+        const formData = new FormData(uploadForm);
+        const fileInput = document.getElementById('pdf-file-input');
+
+        if (fileInput.files.length === 0) {
+            alert('Please select a PDF file to upload.');
+            return;
+        }
+
+        const submitButton = uploadForm.querySelector('button[type="submit"]');
+        submitButton.disabled = true;
+        submitButton.innerText = 'Uploading...';
+
+        try {
+            const response = await fetch(uploadForm.action, {
+                method: uploadForm.method,
+                body: formData
+            });
+
+            const html = await response.text();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+
+            const newFlashContainer = doc.querySelector('.mb-4');
+            const currentFlashContainer = document.querySelector('.mb-4');
+            if (currentFlashContainer && newFlashContainer) {
+                currentFlashContainer.innerHTML = newFlashContainer.innerHTML;
+            } else if (currentFlashContainer) {
+                 currentFlashContainer.innerHTML = '';
+            }
+
+            const newActivePdfDisplay = doc.querySelector('#active-pdf-display'); 
+            const currentActivePdfDisplay = document.querySelector('#active-pdf-display');
+            if (currentActivePdfDisplay && newActivePdfDisplay) {
+                currentActivePdfDisplay.innerHTML = newActivePdfDisplay.innerHTML;
+            } else if (!currentActivePdfDisplay && newActivePdfDisplay) {
+                const existingPdfSection = document.querySelector('.chat-window').previousElementSibling; 
+                if (existingPdfSection && existingPdfSection.classList.contains('bg-gray-50')) { 
+                    existingPdfSection.insertAdjacentElement('afterend', newActivePdfDisplay);
+                } else {
+                    document.querySelector('.chat-window').insertAdjacentElement('beforebegin', newActivePdfDisplay);
+                }
+            } else if (currentActivePdfDisplay && !newActivePdfDisplay) {
+                currentActivePdfDisplay.remove();
+            }
+
+            const newExistingPdfsContainer = doc.getElementById('existing-pdfs-container'); 
+            const currentExistingPdfsContainer = document.getElementById('existing-pdfs-container'); 
+
+            if (currentExistingPdfsContainer && newExistingPdfsContainer) {
+                currentExistingPdfsContainer.innerHTML = newExistingPdfsContainer.innerHTML;
+            } else if (!currentExistingPdfsContainer && newExistingPdfsContainer) {
+                const uploadFormElement = document.getElementById('upload-form');
+                uploadFormElement.insertAdjacentElement('afterend', newExistingPdfsContainer);
+            } else if (currentExistingPdfsContainer && !newExistingPdfsContainer) {
+                currentExistingPdfsContainer.remove();
+            }
+
+            const newChatWindow = doc.getElementById('chat-window');
+            if (newChatWindow) {
+                chatWindow.innerHTML = newChatWindow.innerHTML;
+            }
+
+            setupFlashMessageClosers(); 
+        } catch (error) {
+            console.error('Upload error:', error);
+            const currentFlashContainer = document.querySelector('.mb-4');
+            if (currentFlashContainer) {
+                currentFlashContainer.innerHTML = `<div class="p-3 mb-2 rounded-md bg-red-100 text-red-800">An unexpected network error occurred during upload.</div>`;
+            }
+            alert('An error occurred during upload.');
+        } finally {
+            submitButton.disabled = false;
+            submitButton.innerText = 'Upload PDF';
+            pdfFileInput.value = '';
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+        }
+    });
+  </script>
+</body>
+</html>
